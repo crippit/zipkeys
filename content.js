@@ -1,113 +1,95 @@
-// This content script now listens for both messages from the background script
-// AND for direct keyboard presses.
+// content.js - Final Version
 
-// Listener for messages coming from the background script (from Companion)
-chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
-  // Optional: Check sender if needed (e.g., if (sender.id !== chrome.runtime.id) return;)
-  if (request.command) {
-    console.log("Content script received command from background:", request.command);
-    const success = executeZipCaptionsAction(request.command); // Get success status
-    sendResponse({status: success ? "processed" : "failed_to_execute", action: request.command});
-    // return true; // Only if executeZipCaptionsAction or sendResponse were async.
-                 // If executeZipCaptionsAction is synchronous, this is not strictly needed.
-  } else {
-    // It's good practice to always send a response if the sender expects one.
-    sendResponse({status: "error", message: "No command provided in request."});
-  }
-  // If you want to be explicit about handling all cases and ensuring sendResponse is called,
-  // you might structure it to always call sendResponse. If sendResponse might be called
-  // asynchronously within executeZipCaptionsAction, then you MUST return true here.
-  // For now, assuming executeZipCaptionsAction is sync:
-  return false; // Or simply don't return anything, as sendResponse is called sync.
+console.log('Zip Captions Companion Bridge script loaded.');
+
+// ADDED: Establish a persistent connection to the background script.
+const port = chrome.runtime.connect({ name: 'zipcaptions' });
+port.onDisconnect.addListener(() => {
+    console.warn('Companion Bridge: Disconnected from background script.');
 });
 
-// Listener for keyboard events (Ctrl + Shift + <key> shortcuts)
-document.addEventListener('keydown', function(event) {
-  if (!event.ctrlKey || !event.shiftKey) {
-    return; // Not a Ctrl+Shift shortcut, ignore.
-  }
-
-  let commandToExecute = null;
-
-  // It's good practice to see if we should prevent default behavior
-  // only for the combinations we intend to handle.
-  switch (event.code) {
-    case 'Space':
-      commandToExecute = 'PLAY_PAUSE';
-      console.log("Ctrl + Shift + Space pressed.");
-      event.preventDefault(); // Prevent default for this combo
-      break;
-    case 'ArrowUp':
-      commandToExecute = 'INCREASE_TEXT_SIZE';
-      console.log("Ctrl + Shift + Up Arrow pressed.");
-      event.preventDefault();
-      break;
-    case 'ArrowDown':
-      commandToExecute = 'DECREASE_TEXT_SIZE';
-      console.log("Ctrl + Shift + Down Arrow pressed.");
-      event.preventDefault();
-      break;
-    case 'KeyI':
-      commandToExecute = 'TOGGLE_TEXT_FLOW';
-      console.log("Ctrl + Shift + I pressed.");
-      event.preventDefault();
-      break;
-    case 'KeyF':
-      commandToExecute = 'TOGGLE_FULLSCREEN';
-      console.log("Ctrl + alt + 5 pressed.");
-      event.preventDefault();
-      break;
-    // Note: PING is not a standard event.code for a key.
-    // If PING is a command from background, it's handled by onMessage.
-    default:
-      // console.warn("Unrecognized Ctrl+Shift shortcut. Code:", event.code);
-      // No commandToExecute for unhandled keys, so no action needed.
-      // No event.preventDefault() here unless you want to block ALL unhandled Ctrl+Shift combos.
-      return; // Explicitly return if not handled
-  }
-
-  if (commandToExecute) {
-    executeZipCaptionsAction(commandToExecute);
-  }
-});
-
-// --- Shared function to execute the action on the Zip Captions page ---
-function executeZipCaptionsAction(command) {
-    let buttonFound = false;
-    let buttonSelector = '';
-
-    switch (command) {
-      case 'PLAY_PAUSE':
-       buttonSelector = 'button:has(ng-icon[name="heroPause"])'; // This might be too generic. Be careful.
-        break;
-      case 'TOGGLE_LISTEN': // Renamed for clarity, handles both start and stop
-        buttonSelector = 'button[data-tip="Listen"], button[data-tip="Stop"]';
-        break;
-      case 'INCREASE_TEXT_SIZE':
-        buttonSelector = 'button.btn.btn-sm.btn-primary[data-tip="Increase Text Size"]';
-        break;
-      case 'DECREASE_TEXT_SIZE':
-        buttonSelector = 'button.btn.btn-sm.btn-primary[data-tip="Decrease Text Size"]';
-        break;
-      case 'TOGGLE_TEXT_FLOW':
-        buttonSelector = 'button.btn.btn-md.btn-primary[data-tip="Text Flow"]'; // Verify this data-tip exists
-        break;
-      case 'TOGGLE_FULLSCREEN':
-        buttonSelector = 'button.btn.btn-md.btn-primary[data-tip="Full Screen"]'; // Verify this data-tip exists
-        break;
-      default:
-        console.warn("Unknown command to execute in executeZipCaptionsAction:", command);
-        return false; // Indicate action was not known/performed
-    }
-
-    const targetButton = document.querySelector(buttonSelector);
-
-    if (targetButton) {
-      targetButton.click();
-      console.log(`Action "${command}" performed: Button clicked (selector: ${buttonSelector}).`);
-      buttonFound = true;
-    } else {
-      console.warn(`Action "${command}": Target button not found with selector: ${buttonSelector}`);
-    }
-    return buttonFound; // Return true if button was found and clicked, false otherwise
+function waitForElement(selector) {
+	return new Promise(resolve => {
+		const element = document.querySelector(selector);
+		if (element) return resolve(element);
+		
+		const observer = new MutationObserver(() => {
+			const element = document.querySelector(selector);
+			if (element) {
+				observer.disconnect();
+				resolve(element);
+			}
+		});
+		observer.observe(document.body, { childList: true, subtree: true });
+	});
 }
+
+function executeZipCaptionsAction(command) {
+	let buttonSelector = '';
+	switch (command) {
+		case 'TOGGLE_LISTEN':
+			buttonSelector = 'button[data-tip="Listen"], button[data-tip="Stop"]';
+			break;
+		case 'PLAY_PAUSE':
+			buttonSelector = 'button:has(ng-icon[name="heroPause"]), button:has(ng-icon[name="heroPlay"])';
+			break;
+		default:
+			console.warn(`Companion Bridge: Unknown command received: ${command}`);
+			return;
+	}
+	const targetButton = document.querySelector(buttonSelector);
+	if (targetButton) {
+		targetButton.click();
+		setTimeout(checkAndReportStatus, 150);
+	}
+}
+
+function checkAndReportStatus() {
+	const listenButton = document.querySelector('button[data-tip="Listen"], button[data-tip="Stop"]');
+	let currentStatus = 'unknown';
+	if (listenButton) {
+		const tooltip = listenButton.getAttribute('data-tip');
+		currentStatus = (tooltip === 'Stop') ? 'running' : 'stopped';
+	}
+	// CHANGED: Send message over the persistent port
+	port.postMessage({ type: 'STATUS_UPDATE', payload: currentStatus });
+}
+
+async function setupWordObserver() {
+    const captionContainerSelector = 'div.recognized-text';    
+    const hostElement = await waitForElement(captionContainerSelector);
+    const targetNode = hostElement.shadowRoot || hostElement;
+
+    console.log('Companion Bridge: Word observer is active.');
+
+    const wordObserver = new MutationObserver(() => {
+        const latestText = hostElement.textContent;
+        if (latestText) {
+            const words = latestText.trim().split(/\s+/);
+            const lastWord = words.pop() || '';
+            if (lastWord) {
+                // CHANGED: Send message over the persistent port
+                port.postMessage({ type: 'LAST_WORD_UPDATE', payload: lastWord });
+            }
+        }
+    });
+
+    wordObserver.observe(targetNode, { childList: true, subtree: true, characterData: true });
+}
+
+// This listener is now ONLY for commands coming FROM companion
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+	if (request.command) {
+		executeZipCaptionsAction(request.command);
+		sendResponse({ status: 'processed' });
+	}
+	return true;
+});
+
+async function initialize() {
+	console.log('Companion Bridge: Zip Captions UI found. Activating features.');
+	checkAndReportStatus(); 
+	await setupWordObserver();
+}
+
+waitForElement('button[data-tip="Listen"], button[data-tip="Stop"]').then(initialize);
