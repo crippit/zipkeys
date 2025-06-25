@@ -1,14 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Zip Captions Companion Add-On",
-  "version": "2.0",
+  "version": "3.0",
   "description": "Acts as a bridge to allow Bitfocus Companion to send commands to and receive status from an open Zip Captions tab.",
   "permissions": [
       "tabs"
   ],
   "host_permissions": [
-    "http://localhost:8082/",
-    "ws://localhost:8082/",
     "https://zipcaptions.app/*"
   ],
   "background": {

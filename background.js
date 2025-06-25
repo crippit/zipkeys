@@ -1,4 +1,4 @@
-// background.js - Final Version
+// background.js
 
 let ws = null;
 const COMPANION_WS_URL = 'ws://localhost:8082/';
@@ -10,12 +10,17 @@ function connectWebSocket() {
 	console.log('Attempting to connect to Companion module...');
 	ws = new WebSocket(COMPANION_WS_URL);
 
-	ws.onopen = () => console.log('Successfully connected to Companion module.');
+	ws.onopen = () => {
+		console.log('Successfully connected to Companion module.');
+	};
 
 	ws.onmessage = (event) => {
 		const command = event.data;
+		// Handle PING from Companion to keep connection alive
 		if (command === 'PING') {
-			if (ws.readyState === WebSocket.OPEN) ws.send('PONG');
+            if (ws.readyState === WebSocket.OPEN) {
+				ws.send('PONG');
+			}
 			return;
 		}
 		
@@ -34,16 +39,17 @@ function connectWebSocket() {
 		setTimeout(connectWebSocket, 5000);
 	};
 
-	ws.onerror = () => console.error('WebSocket Error Occurred.');
+	ws.onerror = () => {
+		console.error('WebSocket Error Occurred.');
+	};
 }
 
-// REMOVED: The old onMessage listener.
-// ADDED: A listener for persistent connections from the content script.
+// Listen for the persistent connection from content.js
 chrome.runtime.onConnect.addListener((port) => {
 	console.assert(port.name === 'zipcaptions');
 	console.log('Content script connected.');
 
-	// Listen for messages coming from the content script through this persistent port
+	// Listen for messages from content.js (status updates, last word)
 	port.onMessage.addListener((msg) => {
 		let messageForCompanion = null;
 		if (msg.type === 'STATUS_UPDATE') {
@@ -52,9 +58,9 @@ chrome.runtime.onConnect.addListener((port) => {
 			messageForCompanion = JSON.stringify({ lastWord: msg.payload });
 		}
 
+		// Relay the message to Companion over the WebSocket
 		if (messageForCompanion && ws && ws.readyState === WebSocket.OPEN) {
 			try {
-				console.log('Relaying to Companion:', messageForCompanion);
 				ws.send(messageForCompanion);
 			} catch (e) {
 				console.error('Failed to send message to Companion:', e);
@@ -63,9 +69,9 @@ chrome.runtime.onConnect.addListener((port) => {
 	});
 
 	port.onDisconnect.addListener(() => {
-		console.warn('Content script disconnected.');
+		console.log('Content script port disconnected.');
 	});
 });
 
-// Start the initial connection
+// Initial connection
 connectWebSocket();
